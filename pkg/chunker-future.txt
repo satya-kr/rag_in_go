@@ -1,0 +1,287 @@
+
+// type RecursiveCharacterTextSplitter struct {
+// 	ChunkSize    int
+// 	ChunkOverlap int
+// 	Separators   []string
+// }
+
+// func NewRecursiveCharacterTextSplitter(
+// 	chunkSize int,
+// 	chunkOverlap int,
+// ) *RecursiveCharacterTextSplitter {
+
+// 	if chunkSize <= 0 {
+// 		chunkSize = 500
+// 	}
+
+// 	if chunkOverlap < 0 {
+// 		chunkOverlap = 0
+// 	}
+
+// 	if chunkOverlap >= chunkSize {
+// 		chunkOverlap = chunkSize - 1
+// 	}
+
+// 	return &RecursiveCharacterTextSplitter{
+// 		ChunkSize:    chunkSize,
+// 		ChunkOverlap: chunkOverlap,
+
+// 		// Try these from strongest boundary
+// 		// to weakest boundary.
+// 		Separators: []string{
+// 			"\n\n", // paragraph
+// 			"\n",   // line
+// 			". ",   // sentence
+// 			"? ",
+// 			"! ",
+// 			" ",    // word
+// 			"",     // character
+// 		},
+// 	}
+// }
+
+// func (s *RecursiveCharacterTextSplitter) SplitText(text string) []string {
+// 	text = strings.TrimSpace(text)
+
+// 	if text == "" {
+// 		return nil
+// 	}
+
+// 	return s.splitRecursive(text, s.Separators)
+// }
+
+// func (s *RecursiveCharacterTextSplitter) splitRecursive(
+// 	text string,
+// 	separators []string,
+// ) []string {
+
+// 	// Already small enough.
+// 	if utf8.RuneCountInString(text) <= s.ChunkSize {
+// 		return []string{text}
+// 	}
+
+// 	// If no separators remain, split character-by-character.
+// 	if len(separators) == 0 {
+// 		return s.splitByCharacters(text)
+// 	}
+
+// 	separator := separators[0]
+
+// 	// Split using the current separator.
+// 	parts := splitWithSeparator(text, separator)
+
+// 	// If separator doesn't actually split the text,
+// 	// try the next separator.
+// 	if len(parts) == 1 {
+// 		return s.splitRecursive(text, separators[1:])
+// 	}
+
+// 	var chunks []string
+// 	var current strings.Builder
+
+// 	for _, part := range parts {
+// 		part = strings.TrimSpace(part)
+
+// 		if part == "" {
+// 			continue
+// 		}
+
+// 		partLen := utf8.RuneCountInString(part)
+// 		currentLen := utf8.RuneCountInString(current.String())
+
+// 		// Current chunk + new part fits.
+// 		if currentLen == 0 {
+// 			current.WriteString(part)
+// 			continue
+// 		}
+
+// 		// +1 accounts for the separator/space.
+// 		if currentLen+1+partLen <= s.ChunkSize {
+// 			current.WriteString(" ")
+// 			current.WriteString(part)
+// 			continue
+// 		}
+
+// 		// Current chunk is full.
+// 		currentText := strings.TrimSpace(current.String())
+
+// 		if currentText != "" {
+
+// 			// If this chunk is still too large,
+// 			// recursively split it using weaker separators.
+// 			if utf8.RuneCountInString(currentText) > s.ChunkSize {
+// 				subChunks := s.splitRecursive(
+// 					currentText,
+// 					separators[1:],
+// 				)
+
+// 				chunks = append(chunks, subChunks...)
+// 			} else {
+// 				chunks = append(chunks, currentText)
+// 			}
+// 		}
+
+// 		current.Reset()
+
+// 		// If the new part itself is too large,
+// 		// recursively split it.
+// 		if partLen > s.ChunkSize {
+
+// 			subChunks := s.splitRecursive(
+// 				part,
+// 				separators[1:],
+// 			)
+
+// 			chunks = append(chunks, subChunks...)
+// 		} else {
+// 			current.WriteString(part)
+// 		}
+// 	}
+
+// 	// Add remaining chunk.
+// 	if current.Len() > 0 {
+// 		currentText := strings.TrimSpace(current.String())
+
+// 		if currentText != "" {
+// 			if utf8.RuneCountInString(currentText) > s.ChunkSize {
+// 				chunks = append(
+// 					chunks,
+// 					s.splitRecursive(
+// 						currentText,
+// 						separators[1:],
+// 					)...,
+// 				)
+// 			} else {
+// 				chunks = append(chunks, currentText)
+// 			}
+// 		}
+// 	}
+
+// 	// Add overlap.
+// 	return s.addOverlap(chunks)
+// }
+
+// func (s *RecursiveCharacterTextSplitter) splitByCharacters(
+// 	text string,
+// ) []string {
+
+// 	runes := []rune(text)
+
+// 	var chunks []string
+
+// 	start := 0
+
+// 	for start < len(runes) {
+
+// 		end := start + s.ChunkSize
+
+// 		if end > len(runes) {
+// 			end = len(runes)
+// 		}
+
+// 		chunk := strings.TrimSpace(
+// 			string(runes[start:end]),
+// 		)
+
+// 		if chunk != "" {
+// 			chunks = append(chunks, chunk)
+// 		}
+
+// 		// Move forward while keeping overlap.
+// 		start = end - s.ChunkOverlap
+
+// 		if start < 0 {
+// 			start = 0
+// 		}
+
+// 		if end == len(runes) {
+// 			break
+// 		}
+// 	}
+
+// 	return chunks
+// }
+
+// func (s *RecursiveCharacterTextSplitter) addOverlap(
+// 	chunks []string,
+// ) []string {
+
+// 	if s.ChunkOverlap == 0 || len(chunks) <= 1 {
+// 		return chunks
+// 	}
+
+// 	result := make([]string, 0, len(chunks))
+
+// 	for i, chunk := range chunks {
+
+// 		if i == 0 {
+// 			result = append(result, chunk)
+// 			continue
+// 		}
+
+// 		previous := result[len(result)-1]
+
+// 		overlap := getLastRunes(
+// 			previous,
+// 			s.ChunkOverlap,
+// 		)
+
+// 		if overlap == "" {
+// 			result = append(result, chunk)
+// 			continue
+// 		}
+
+// 		merged := strings.TrimSpace(
+// 			overlap + " " + chunk,
+// 		)
+
+// 		// Don't allow overlap to make the chunk
+// 		// exceed ChunkSize.
+// 		if utf8.RuneCountInString(merged) <= s.ChunkSize {
+// 			result = append(result, merged)
+// 		} else {
+// 			result = append(result, chunk)
+// 		}
+// 	}
+
+// 	return result
+// }
+
+// func getLastRunes(text string, count int) string {
+
+// 	runes := []rune(text)
+
+// 	if count >= len(runes) {
+// 		return text
+// 	}
+
+// 	return string(runes[len(runes)-count:])
+// }
+
+// func splitWithSeparator(text string, separator string) []string {
+
+// 	// Empty separator means character-level splitting.
+// 	if separator == "" {
+// 		runes := []rune(text)
+
+// 		result := make([]string, 0, len(runes))
+
+// 		for _, r := range runes {
+// 			result = append(result, string(r))
+// 		}
+
+// 		return result
+// 	}
+
+// 	return strings.Split(text, separator)
+// }
+
+/* how to use the RecursiveCharacterTextSplitter
+splitter := chunker.NewRecursiveCharacterTextSplitter(
+		500, // chunk size
+		50,  // overlap
+	)
+
+chunks := splitter.SplitText(text)
+
+*/
