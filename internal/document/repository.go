@@ -20,13 +20,14 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 func (r *Repository) Create(
 	ctx context.Context,
 	filename string,
+	category string,
 ) (int64, error) {
 
 	var id int64
 
 	query := `
-		INSERT INTO documents (filename)
-		VALUES ($1)
+		INSERT INTO documents (filename, category)
+		VALUES ($1, $2)
 		RETURNING id
 	`
 
@@ -34,6 +35,7 @@ func (r *Repository) Create(
 		ctx,
 		query,
 		filename,
+		category,
 	).Scan(&id)
 
 	if err != nil {

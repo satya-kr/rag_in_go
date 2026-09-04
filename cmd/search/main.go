@@ -56,7 +56,8 @@ func main() {
 	// QUESTION
 	// -----------------------------------------
 
-	question := "What is VSCode"
+	// question := "What is VSCode"
+	question := "What is RAG?"
 
 	fmt.Println("Question:", question)
 
@@ -99,9 +100,17 @@ func main() {
 	// SIMILARITY SEARCH
 	// -----------------------------------------
 
-	results, err := chunkRepo.Search(
+	// results, err := chunkRepo.Search(
+	// 	ctx,
+	// 	questionEmbedding,
+	// 	5,
+	// )
+
+	// OR Similarity Search + category
+	results, err := chunkRepo.SearchByCategory(
 		ctx,
 		questionEmbedding,
+		"technology",
 		5,
 	)
 

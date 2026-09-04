@@ -73,6 +73,7 @@ func main() {
 	documentID, err := documentRepo.Create(
 		ctx,
 		"rag-example.txt",
+		"technology",
 	)
 
 	if err != nil {
