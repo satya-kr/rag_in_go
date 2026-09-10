@@ -1,7 +1,6 @@
 package chunker
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -28,9 +27,6 @@ func SplitText(text string, chunkSize int, overlap int) []string {
 	words := strings.Fields(text)
 
 	var chunks []string
-	fmt.Println(" =================== CHUNKING =================== ")
-	fmt.Println("chunks ->>", chunks)
-
 	start := 0
 
 	for start < len(words) {
@@ -107,6 +103,5 @@ func SplitText(text string, chunkSize int, overlap int) []string {
 
 		start = newStart
 	}
-	fmt.Println(" =================== CHUNKING END =================== ")
 	return chunks
 }

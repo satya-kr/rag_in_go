@@ -9,14 +9,16 @@ import (
 )
 
 type Client struct {
-	BaseURL string
-	Model   string
+	BaseURL    string
+	Model      string
+	httpClient *http.Client
 }
 
 func NewClient() *Client {
 	return &Client{
-		BaseURL: "http://localhost:11434",
-		Model:   "deepseek-r1:latest",
+		BaseURL:    "http://localhost:11434",
+		Model:      "deepseek-r1:latest",
+		httpClient: &http.Client{},
 	}
 }
 
@@ -61,7 +63,7 @@ func (c *Client) Generate(
 		"application/json",
 	)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ollama request failed: %w", err)
 	}

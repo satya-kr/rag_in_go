@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type Request struct {
@@ -20,6 +21,13 @@ type Response struct {
 	Results []Result `json:"results"`
 }
 
+// sanitizeLog removes newlines to prevent log injection.
+func sanitizeLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
+}
+
 func rerankHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req Request
@@ -29,10 +37,10 @@ func rerankHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Query: %s", req.Query)
+	log.Printf("Query: %s", sanitizeLog(req.Query))
 
 	for i, doc := range req.Documents {
-		log.Printf("Document %d: %s", i, doc)
+		log.Printf("Document %d: %s", i, sanitizeLog(doc))
 	}
 
 	// Fake scores for testing the HTTP client.
@@ -44,9 +52,9 @@ func rerankHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	json.NewEncoder(w).Encode(Response{
-		Results: results,
-	})
+	if err := json.NewEncoder(w).Encode(Response{Results: results}); err != nil {
+		log.Printf("encode response: %v", err)
+	}
 }
 
 func main() {

@@ -12,32 +12,7 @@ func NewMockReranker() *MockReranker {
 	return &MockReranker{}
 }
 
-// func (r *MockReranker) Rerank(
-// 	ctx context.Context,
-// 	query string,
-// 	documents []Document,
-// 	topK int,
-// ) ([]Document, error) {
-
-// 	// For learning purposes we simulate reranking.
-// 	for i := range documents {
-// 		documents[i].Score = float64(len(documents) - i)
-// 	}
-
-// 	sort.Slice(
-// 		documents,
-// 		func(i, j int) bool {
-// 			return documents[i].Score > documents[j].Score
-// 		},
-// 	)
-
-// 	if topK > len(documents) {
-// 		topK = len(documents)
-// 	}
-
-// 	return documents[:topK], nil
-// }
-
+// Rerank scores documents by counting query word matches (for local testing).
 func (r *MockReranker) Rerank(
 	ctx context.Context,
 	query string,

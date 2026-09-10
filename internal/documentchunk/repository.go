@@ -18,7 +18,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	}
 }
 
-// Chunk represents a chunk returned from similarity search.
+// Chunk represents a chunk returned from similarity or keyword search.
 type Chunk struct {
 	ID           int64
 	DocumentID   int64
@@ -26,12 +26,6 @@ type Chunk struct {
 	Content      string
 	Distance     float32
 	KeywordScore float32
-}
-
-type HybridResult struct {
-	Chunk       Chunk
-	VectorRank  int
-	KeywordRank int
 }
 
 func (r *Repository) Create(
