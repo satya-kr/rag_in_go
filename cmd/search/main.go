@@ -7,6 +7,8 @@ import (
 	"go_rag/internal/documentchunk"
 	"go_rag/internal/embedding"
 	"go_rag/internal/llm"
+	"go_rag/internal/reranker"
+	"go_rag/internal/retrieval"
 	"log"
 	"os"
 
@@ -57,7 +59,9 @@ func main() {
 	// -----------------------------------------
 
 	// question := "What is VSCode"
-	question := "What is RAG?"
+	// question := "What is RAG?"
+	question := "What is retrieval augmented generation?"
+	// question := "What is the capital of France?"
 
 	fmt.Println("Question:", question)
 
@@ -111,7 +115,7 @@ func main() {
 		ctx,
 		questionEmbedding,
 		"technology",
-		5,
+		10,
 	)
 
 	if err != nil {
@@ -119,33 +123,189 @@ func main() {
 	}
 
 	// -----------------------------------------
+	// KEYWORD SEARCH
+	// -----------------------------------------
+
+	keywordResults, err := chunkRepo.KeywordSearchByCategory(
+		ctx,
+		question,
+		"technology",
+		10,
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	hybridResults := retrieval.RRF(
+		results,
+		keywordResults,
+		60,
+		10,
+	)
+
+	// -----------------------------------------
+	// COHERE RERANKING
+	// -----------------------------------------
+
+	cohereReranker, err := reranker.NewCohereRerankerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	rerankDocuments := make([]reranker.Document, 0, len(hybridResults))
+
+	for _, result := range hybridResults {
+		rerankDocuments = append(
+			rerankDocuments,
+			reranker.Document{
+				ID:             result.Chunk.ID,
+				Content:        result.Chunk.Content,
+				RetrievalScore: result.RRFScore,
+			},
+		)
+	}
+
+	rerankedResults, err := cohereReranker.Rerank(
+		ctx,
+		question,
+		rerankDocuments,
+		5,
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	const rerankThreshold = 0.40
+
+	if len(rerankedResults) == 0 ||
+		rerankedResults[0].RerankScore < rerankThreshold {
+
+		fmt.Println()
+		fmt.Println("======================================")
+		fmt.Println("LOW RELEVANCE")
+		fmt.Println("======================================")
+		fmt.Println("I don't know based on the provided documents.")
+
+		return
+	}
+
+	// fmt.Println()
+	// fmt.Println("======================================")
+	// fmt.Println("TOP KEYWORD SEARCH RESULTS")
+	// fmt.Println("======================================")
+
+	// for i, chunk := range keywordResults {
+
+	// 	fmt.Println()
+	// 	fmt.Printf("Result #%d\n", i+1)
+	// 	fmt.Println("--------------------------------------")
+
+	// 	fmt.Println("Chunk ID:", chunk.ID)
+	// 	fmt.Println("Document ID:", chunk.DocumentID)
+	// 	fmt.Println("Chunk Index:", chunk.ChunkIndex)
+
+	// 	fmt.Printf(
+	// 		"Keyword Score: %.6f\n",
+	// 		chunk.KeywordScore,
+	// 	)
+
+	// 	fmt.Println("Content:")
+	// 	fmt.Println(chunk.Content)
+	// }
+
+	// -----------------------------------------
 	// PRINT RESULTS
 	// -----------------------------------------
 
+	// fmt.Println()
+	// fmt.Println("======================================")
+	// fmt.Println("TOP 5 SIMILAR CHUNKS")
+	// fmt.Println("======================================")
+
+	// for i, chunk := range results {
+
+	// 	fmt.Println()
+	// 	fmt.Printf("Result #%d\n", i+1)
+	// 	fmt.Println("--------------------------------------")
+
+	// 	fmt.Println("Chunk ID:", chunk.ID)
+	// 	fmt.Println("Document ID:", chunk.DocumentID)
+	// 	fmt.Println("Chunk Index:", chunk.ChunkIndex)
+	// 	fmt.Printf("Distance: %.6f\n", chunk.Distance)
+
+	// 	fmt.Println("Content:")
+	// 	fmt.Println(chunk.Content)
+	// }
+
+	// fmt.Println()
+	// fmt.Println("======================================")
+	// fmt.Println("SEARCH COMPLETED")
+	// fmt.Println("======================================")
+
 	fmt.Println()
 	fmt.Println("======================================")
-	fmt.Println("TOP 5 SIMILAR CHUNKS")
+	fmt.Println("VECTOR RESULTS")
 	fmt.Println("======================================")
 
 	for i, chunk := range results {
-
-		fmt.Println()
-		fmt.Printf("Result #%d\n", i+1)
-		fmt.Println("--------------------------------------")
-
-		fmt.Println("Chunk ID:", chunk.ID)
-		fmt.Println("Document ID:", chunk.DocumentID)
-		fmt.Println("Chunk Index:", chunk.ChunkIndex)
-		fmt.Printf("Distance: %.6f\n", chunk.Distance)
-
-		fmt.Println("Content:")
-		fmt.Println(chunk.Content)
+		fmt.Printf(
+			"Rank %d | ID %d | Distance %.6f\n",
+			i+1,
+			chunk.ID,
+			chunk.Distance,
+		)
 	}
 
 	fmt.Println()
 	fmt.Println("======================================")
-	fmt.Println("SEARCH COMPLETED")
+	fmt.Println("KEYWORD RESULTS")
 	fmt.Println("======================================")
+
+	for i, chunk := range keywordResults {
+		fmt.Printf(
+			"Rank %d | ID %d | Keyword Score %.6f\n",
+			i+1,
+			chunk.ID,
+			chunk.KeywordScore,
+		)
+	}
+
+	fmt.Println()
+	fmt.Println("======================================")
+	fmt.Println("HYBRID RESULTS - RRF")
+	fmt.Println("======================================")
+
+	for i, result := range hybridResults {
+
+		fmt.Printf(
+			"Rank %d | ID %d | RRF %.6f | Vector Rank %d | Keyword Rank %d\n",
+			i+1,
+			result.Chunk.ID,
+			result.RRFScore,
+			result.VectorRank,
+			result.KeywordRank,
+		)
+	}
+
+	fmt.Println()
+	fmt.Println("======================================")
+	fmt.Println("COHERE RERANKED RESULTS")
+	fmt.Println("======================================")
+
+	for i, doc := range rerankedResults {
+		fmt.Printf(
+			"Rank %d | ID %d | RRF %.6f | Cohere %.6f\n",
+			i+1,
+			doc.ID,
+			doc.RetrievalScore,
+			doc.RerankScore,
+		)
+
+		fmt.Println("Content:", doc.Content)
+		fmt.Println()
+	}
 
 	fmt.Println()
 	fmt.Println("======================================")
@@ -155,12 +315,14 @@ func main() {
 	// Build context
 	contextText := ""
 
-	for i, chunk := range results {
+	// for i, chunk := range results {
+	for i, doc := range rerankedResults {
 
 		contextText += fmt.Sprintf(
 			"\n[Source %d]\n%s\n",
 			i+1,
-			chunk.Content,
+			// chunk.Content,
+			doc.Content,
 		)
 	}
 
@@ -184,6 +346,18 @@ func main() {
 	`, contextText, question)
 
 	llmClient := llm.NewClient()
+
+	fmt.Println()
+	fmt.Println("======================================")
+	fmt.Println("CONTEXT SENT TO LLM")
+	fmt.Println("======================================")
+	fmt.Println(contextText)
+
+	fmt.Println()
+	fmt.Println("======================================")
+	fmt.Println("PROMPT SENT TO LLM")
+	fmt.Println("======================================")
+	fmt.Println(prompt)
 
 	answer, err := llmClient.Generate(
 		ctx,

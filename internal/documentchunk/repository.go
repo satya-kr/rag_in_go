@@ -20,11 +20,18 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 // Chunk represents a chunk returned from similarity search.
 type Chunk struct {
-	ID         int64
-	DocumentID int64
-	ChunkIndex int
-	Content    string
-	Distance   float32
+	ID           int64
+	DocumentID   int64
+	ChunkIndex   int
+	Content      string
+	Distance     float32
+	KeywordScore float32
+}
+
+type HybridResult struct {
+	Chunk       Chunk
+	VectorRank  int
+	KeywordRank int
 }
 
 func (r *Repository) Create(
@@ -197,6 +204,87 @@ func (r *Repository) SearchByCategory(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
 			"iterate document chunks: %w",
+			err,
+		)
+	}
+
+	return chunks, nil
+}
+
+// KeywordSearchByCategory performs PostgreSQL full-text search
+// and filters results by document category.
+func (r *Repository) KeywordSearchByCategory(
+	ctx context.Context,
+	queryText string,
+	category string,
+	limit int,
+) ([]Chunk, error) {
+
+	query := `
+        SELECT
+            dc.id,
+            dc.document_id,
+            dc.chunk_index,
+            dc.content,
+            ts_rank(
+                dc.search_vector,
+                websearch_to_tsquery('english', $1)
+            ) AS keyword_score
+        FROM document_chunks dc
+        JOIN documents d
+            ON d.id = dc.document_id
+        WHERE d.category = $2
+          AND dc.search_vector @@ websearch_to_tsquery('english', $1)
+        ORDER BY 
+			keyword_score DESC,
+			dc.id ASC
+        LIMIT $3
+    `
+
+	rows, err := r.db.Query(
+		ctx,
+		query,
+		queryText,
+		category,
+		limit,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"keyword search document chunks: %w",
+			err,
+		)
+	}
+
+	defer rows.Close()
+
+	var chunks []Chunk
+
+	for rows.Next() {
+
+		var chunk Chunk
+
+		err := rows.Scan(
+			&chunk.ID,
+			&chunk.DocumentID,
+			&chunk.ChunkIndex,
+			&chunk.Content,
+			&chunk.KeywordScore,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf(
+				"scan keyword search result: %w",
+				err,
+			)
+		}
+
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"iterate keyword search results: %w",
 			err,
 		)
 	}
