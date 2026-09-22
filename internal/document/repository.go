@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,19 +97,33 @@ func (r *Repository) List(ctx context.Context) ([]Document, error) {
 
 // Delete removes a document and all its chunks (cascade expected in schema).
 func (r *Repository) Delete(ctx context.Context, id int64) error {
-
-	tag, err := r.db.Exec(
-		ctx,
-		`DELETE FROM documents WHERE id = $1`,
-		id,
-	)
+	tag, err := r.db.Exec(ctx, `DELETE FROM documents WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete document: %w", err)
 	}
-
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("document %d not found", id)
 	}
-
 	return nil
+}
+
+// DeleteBulk removes multiple documents and their chunks in one query.
+func (r *Repository) DeleteBulk(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// Build $1,$2,... placeholders
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf("DELETE FROM documents WHERE id IN (%s)",
+		strings.Join(placeholders, ","))
+	tag, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("bulk delete documents: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

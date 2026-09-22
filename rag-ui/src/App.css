@@ -679,6 +679,52 @@
 /* ── Documents panel ─────────────────────────────────────── */
 .docs-panel { flex: 1; }
 
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  min-height: 1.8rem;
+}
+
+.select-all {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.select-all input[type="checkbox"] {
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+.btn-delete-bulk {
+  padding: 0.3rem 0.7rem;
+  background: rgba(255, 68, 102, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(255, 68, 102, 0.35);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.btn-delete-bulk:hover:not(:disabled) {
+  background: rgba(255, 68, 102, 0.22);
+  box-shadow: 0 0 12px rgba(255, 68, 102, 0.25);
+}
+
+.btn-delete-bulk:disabled { opacity: 0.35; cursor: not-allowed; }
+
 .doc-list {
   list-style: none;
   display: flex;
@@ -701,6 +747,17 @@
 .doc-item:hover {
   border-color: rgba(0, 245, 255, 0.25);
   background: rgba(0, 245, 255, 0.05);
+}
+
+.doc-item.selected {
+  border-color: rgba(255, 68, 102, 0.4);
+  background: rgba(255, 68, 102, 0.05);
+}
+
+.doc-checkbox {
+  accent-color: var(--cyan);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .doc-info {

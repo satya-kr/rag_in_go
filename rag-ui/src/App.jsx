@@ -221,6 +221,8 @@ function DocumentsPanel({ refresh }) {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -228,6 +230,7 @@ function DocumentsPanel({ refresh }) {
       const res = await fetch(`${API}/documents`);
       const data = await res.json();
       setDocs(Array.isArray(data) ? data : []);
+      setSelected(new Set());
     } catch {
       setDocs([]);
     } finally {
@@ -243,9 +246,41 @@ function DocumentsPanel({ refresh }) {
     try {
       await fetch(`${API}/documents/${id}`, { method: "DELETE" });
       setDocs((prev) => prev.filter((d) => d.id !== id));
+      setSelected((prev) => { const s = new Set(prev); s.delete(id); return s; });
     } finally {
       setDeletingId(null);
     }
+  }
+
+  async function bulkDelete() {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} document(s) and all their chunks?`)) return;
+    setBulkDeleting(true);
+    try {
+      await fetch(`${API}/documents/bulk`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selected) }),
+      });
+      setDocs((prev) => prev.filter((d) => !selected.has(d.id)));
+      setSelected(new Set());
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  function toggleSelect(id) {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+  }
+
+  const allSelected = docs.length > 0 && selected.size === docs.length;
+
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(docs.map((d) => d.id)));
   }
 
   return (
@@ -264,31 +299,60 @@ function DocumentsPanel({ refresh }) {
       )}
 
       {docs.length > 0 && (
-        <ul className="doc-list">
-          {docs.map((doc) => (
-            <li key={doc.id} className="doc-item">
-              <div className="doc-info">
-                <span className={`ext-badge ext-${fileExt(doc.filename)}`}>
-                  {fileExt(doc.filename).toUpperCase()}
-                </span>
-                <div className="doc-meta">
-                  <span className="doc-name" title={doc.filename}>{doc.filename}</span>
-                  <span className="doc-sub">
-                    {doc.chunk_count} chunks · {doc.category} · {fmtDate(doc.created_at)}
-                  </span>
-                </div>
-              </div>
+        <>
+          <div className="bulk-bar">
+            <label className="select-all">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+              />
+              {allSelected ? "Deselect all" : "Select all"}
+            </label>
+            {selected.size > 0 && (
               <button
-                className="btn-delete"
-                onClick={() => deleteDoc(doc.id)}
-                disabled={deletingId === doc.id}
-                aria-label={`Delete ${doc.filename}`}
+                className="btn-delete-bulk"
+                onClick={bulkDelete}
+                disabled={bulkDeleting}
               >
-                {deletingId === doc.id ? "…" : "🗑"}
+                {bulkDeleting ? "Deleting…" : `🗑 Delete ${selected.size}`}
               </button>
-            </li>
-          ))}
-        </ul>
+            )}
+          </div>
+
+          <ul className="doc-list">
+            {docs.map((doc) => (
+              <li key={doc.id} className={`doc-item${selected.has(doc.id) ? " selected" : ""}`}>
+                <input
+                  type="checkbox"
+                  className="doc-checkbox"
+                  checked={selected.has(doc.id)}
+                  onChange={() => toggleSelect(doc.id)}
+                  aria-label={`Select ${doc.filename}`}
+                />
+                <div className="doc-info">
+                  <span className={`ext-badge ext-${fileExt(doc.filename)}`}>
+                    {fileExt(doc.filename).toUpperCase()}
+                  </span>
+                  <div className="doc-meta">
+                    <span className="doc-name" title={doc.filename}>{doc.filename}</span>
+                    <span className="doc-sub">
+                      {doc.chunk_count} chunks · {doc.category} · {fmtDate(doc.created_at)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  className="btn-delete"
+                  onClick={() => deleteDoc(doc.id)}
+                  disabled={deletingId === doc.id}
+                  aria-label={`Delete ${doc.filename}`}
+                >
+                  {deletingId === doc.id ? "…" : "🗑"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -50,9 +51,20 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
+type bulkDeleteRequest struct {
+	IDs []int64 `json:"ids"`
+}
+
 // -----------------------------------------
 // HELPERS
 // -----------------------------------------
+
+// stage logs a labelled step with elapsed time since start.
+func stage(start time.Time, format string, args ...any) {
+	elapsed := time.Since(start)
+	msg := fmt.Sprintf(format, args...)
+	log.Printf("[%6.0fms] %s", float64(elapsed.Milliseconds()), msg)
+}
 
 // cors sets permissive CORS headers and handles OPTIONS preflight.
 // Returns true if the request was a preflight (caller should return).
@@ -93,6 +105,11 @@ func ingestFile(
 	category string,
 ) (int, error) {
 
+	start := time.Now()
+	log.Printf("──────────────────────────────────────────")
+	log.Printf("[INGEST] START  file=%q  size=%d bytes  category=%q",
+		fh.Filename, fh.Size, category)
+
 	f, err := fh.Open()
 	if err != nil {
 		return 0, fmt.Errorf("open file: %w", err)
@@ -104,18 +121,17 @@ func ingestFile(
 	// -----------------------------------------
 
 	ext := strings.ToLower(filepath.Ext(fh.Filename))
+	stage(start, "[INGEST] EXTRACT  type=%s", ext)
 
 	var text string
 
 	switch ext {
 	case ".pdf":
-		// Read all bytes; extractor writes them to a temp file so pdf.Open
-		// can seek correctly. FromPDFLenient skips unreadable pages (e.g.
-		// scanned/image pages) rather than aborting the whole document.
 		data, readErr := io.ReadAll(f)
 		if readErr != nil {
 			return 0, fmt.Errorf("read pdf bytes: %w", readErr)
 		}
+		stage(start, "[INGEST] EXTRACT  read %d bytes from PDF", len(data))
 		var pdfErr error
 		text, pdfErr = extractor.FromPDFLenient(data)
 		if pdfErr != nil {
@@ -123,7 +139,6 @@ func ingestFile(
 		}
 
 	case ".txt", ".md", ".rst", "":
-		// All plain-text formats — markdown, plain text, reStructuredText.
 		var txtErr error
 		text, txtErr = extractor.FromText(f)
 		if txtErr != nil {
@@ -138,32 +153,53 @@ func ingestFile(
 		return 0, fmt.Errorf("file contains no extractable text")
 	}
 
+	stage(start, "[INGEST] EXTRACT  done  chars=%d", len(text))
+
 	// -----------------------------------------
 	// SAVE DOCUMENT RECORD
 	// -----------------------------------------
 
+	stage(start, "[INGEST] DB  saving document record")
 	docID, err := docRepo.Create(ctx, fh.Filename, category)
 	if err != nil {
 		return 0, fmt.Errorf("create document record: %w", err)
 	}
+	stage(start, "[INGEST] DB  document saved  id=%d", docID)
 
 	// -----------------------------------------
-	// CHUNK → EMBED → SAVE
+	// CHUNKING
 	// -----------------------------------------
 
-	// chunkSize=500 chars, overlap=50 chars — good balance for large docs.
+	stage(start, "[INGEST] CHUNK  splitting text  chunkSize=500 overlap=50")
 	chunks := chunker.SplitText(text, 500, 50)
+	stage(start, "[INGEST] CHUNK  done  total_chunks=%d", len(chunks))
+
+	// -----------------------------------------
+	// EMBED + SAVE CHUNKS
+	// -----------------------------------------
 
 	for i, chunk := range chunks {
+		stage(start, "[INGEST] EMBED  chunk %d/%d  chars=%d  → calling Ollama...",
+			i+1, len(chunks), len(chunk))
+
 		vector, err := embClient.CreateEmbedding(ctx, chunk)
 		if err != nil {
 			return i, fmt.Errorf("embed chunk %d: %w", i, err)
 		}
 
+		stage(start, "[INGEST] EMBED  chunk %d/%d  done  dims=%d  → saving to DB...",
+			i+1, len(chunks), len(vector))
+
 		if _, err := chunkRepo.Create(ctx, docID, i, chunk, vector); err != nil {
 			return i, fmt.Errorf("save chunk %d: %w", i, err)
 		}
+
+		stage(start, "[INGEST] DB  chunk %d/%d saved", i+1, len(chunks))
 	}
+
+	stage(start, "[INGEST] DONE  file=%q  chunks=%d  total_time=%s",
+		fh.Filename, len(chunks), time.Since(start).Round(time.Millisecond))
+	log.Printf("──────────────────────────────────────────")
 
 	return len(chunks), nil
 }
@@ -187,6 +223,10 @@ func handleQuery(
 			return
 		}
 
+		start := time.Now()
+		log.Printf("══════════════════════════════════════════")
+		log.Printf("[QUERY] START  remote=%s", r.RemoteAddr)
+
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -200,50 +240,87 @@ func handleQuery(
 			return
 		}
 
+		stage(start, "[QUERY] QUESTION  %q", req.Question)
+
+		// -----------------------------------------
+		// EMBED QUESTION
+		// -----------------------------------------
+
+		stage(start, "[QUERY] EMBED  embedding question → calling Ollama nomic-embed-text...")
 		qEmbedding, err := embClient.CreateEmbedding(r.Context(), req.Question)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, queryResponse{Error: err.Error()})
 			return
 		}
+		stage(start, "[QUERY] EMBED  done  dims=%d", len(qEmbedding))
 
+		// -----------------------------------------
+		// VECTOR SEARCH
+		// -----------------------------------------
+
+		stage(start, "[QUERY] SEARCH  running vector similarity search  top_k=5...")
 		chunks, err := chunkRepo.Search(r.Context(), qEmbedding, 5)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, queryResponse{Error: err.Error()})
 			return
 		}
+		stage(start, "[QUERY] SEARCH  done  results=%d", len(chunks))
 
+		for i, c := range chunks {
+			stage(start, "[QUERY] SEARCH  rank=%d  chunk_id=%d  dist=%.4f  preview=%q",
+				i+1, c.ID, c.Distance, truncate(c.Content, 60))
+		}
+
+		// -----------------------------------------
+		// BUILD CONTEXT + PROMPT
+		// -----------------------------------------
+
+		stage(start, "[QUERY] PROMPT  building context from %d chunks", len(chunks))
 		contextText := ""
 		for i, c := range chunks {
 			contextText += fmt.Sprintf("\n[Source %d]\n%s\n", i+1, c.Content)
 		}
 
-		prompt := fmt.Sprintf(`You are a helpful AI assistant.
-Answer the user's question using ONLY the context provided below.
-If the answer cannot be found in the context, say: "I don't know based on the provided documents."
-Do not use your own knowledge.
+		prompt := fmt.Sprintf(`You are a precise technical assistant. Answer ONLY using the context below. Be direct and concise.
 
-Context:
+RULES:
+- Answer only from the context. Do not use outside knowledge.
+- If the answer is not in the context, respond: "I don't know based on the provided documents."
+- Do not explain your reasoning. Do not repeat the question. Just answer.
+
+CONTEXT:
 %s
 
-Question:
-%s
+QUESTION: %s
 
-Answer:`, contextText, req.Question)
+ANSWER:`, contextText, req.Question)
 
+		stage(start, "[QUERY] PROMPT  done  prompt_chars=%d", len(prompt))
+
+		// -----------------------------------------
+		// LLM GENERATION
+		// -----------------------------------------
+
+		stage(start, "[QUERY] LLM  sending prompt to %s → waiting for response...", llmClient.Model)
 		answer, err := llmClient.Generate(r.Context(), prompt)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, queryResponse{Error: err.Error()})
 			return
 		}
+		stage(start, "[QUERY] LLM  done  answer_chars=%d", len(answer))
+
+		// -----------------------------------------
+		// DONE
+		// -----------------------------------------
+
+		stage(start, "[QUERY] DONE  total_time=%s", time.Since(start).Round(time.Millisecond))
+		log.Printf("══════════════════════════════════════════")
 
 		writeJSON(w, http.StatusOK, queryResponse{Answer: answer})
 	}
 }
 
 // handleUpload accepts multipart/form-data with one or more files.
-// Field name: "files" (multiple allowed). Optional field: "category".
-// Each file is extracted, chunked, embedded, and saved independently —
-// a failure on one file does not abort the others.
 func handleUpload(
 	docRepo *document.Repository,
 	chunkRepo *documentchunk.Repository,
@@ -257,6 +334,10 @@ func handleUpload(
 			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "method not allowed"})
 			return
 		}
+
+		start := time.Now()
+		log.Printf("══════════════════════════════════════════")
+		log.Printf("[UPLOAD] START  remote=%s", r.RemoteAddr)
 
 		// Keep up to 32 MB per file part in memory; larger parts spill to
 		// temp files automatically — this keeps RAM bounded for large uploads.
@@ -277,6 +358,11 @@ func handleUpload(
 			return
 		}
 
+		stage(start, "[UPLOAD] FILES  count=%d  category=%q", len(fileHeaders), category)
+		for i, fh := range fileHeaders {
+			stage(start, "[UPLOAD] FILES  [%d] %q  %d bytes", i+1, fh.Filename, fh.Size)
+		}
+
 		results := make([]fileResult, 0, len(fileHeaders))
 
 		for _, fh := range fileHeaders {
@@ -285,13 +371,18 @@ func handleUpload(
 			n, err := ingestFile(r.Context(), fh, docRepo, chunkRepo, embClient, category)
 			if err != nil {
 				res.Error = err.Error()
-				log.Printf("ingest %q: %v", fh.Filename, err)
+				log.Printf("[UPLOAD] ERROR  file=%q  err=%v", fh.Filename, err)
 			} else {
 				res.Chunks = n
+				log.Printf("[UPLOAD] OK  file=%q  chunks=%d", fh.Filename, n)
 			}
 
 			results = append(results, res)
 		}
+
+		stage(start, "[UPLOAD] DONE  files=%d  total_time=%s",
+			len(fileHeaders), time.Since(start).Round(time.Millisecond))
+		log.Printf("══════════════════════════════════════════")
 
 		writeJSON(w, http.StatusOK, uploadResponse{Files: results})
 	}
@@ -304,13 +395,13 @@ func handleDocuments(docRepo *document.Repository) http.HandlerFunc {
 			return
 		}
 
-		// Extract optional trailing /{id} from the path.
 		idStr := strings.TrimPrefix(r.URL.Path, "/documents")
 		idStr = strings.TrimPrefix(idStr, "/")
 
 		switch r.Method {
 
 		case http.MethodGet:
+			log.Printf("[DOCS] LIST  fetching all documents...")
 			docs, err := docRepo.List(r.Context())
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
@@ -319,6 +410,7 @@ func handleDocuments(docRepo *document.Repository) http.HandlerFunc {
 			if docs == nil {
 				docs = []document.Document{}
 			}
+			log.Printf("[DOCS] LIST  done  count=%d", len(docs))
 			writeJSON(w, http.StatusOK, docs)
 
 		case http.MethodDelete:
@@ -331,10 +423,12 @@ func handleDocuments(docRepo *document.Repository) http.HandlerFunc {
 				writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid document id"})
 				return
 			}
+			log.Printf("[DOCS] DELETE  id=%d", id)
 			if err := docRepo.Delete(r.Context(), id); err != nil {
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
 				return
 			}
+			log.Printf("[DOCS] DELETE  done  id=%d", id)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 
 		default:
@@ -343,38 +437,87 @@ func handleDocuments(docRepo *document.Repository) http.HandlerFunc {
 	}
 }
 
+// handleBulkDelete deletes multiple documents by ID in one request.
+func handleBulkDelete(docRepo *document.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cors(w, r) {
+			return
+		}
+		if r.Method != http.MethodDelete {
+			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "method not allowed"})
+			return
+		}
+		var req bulkDeleteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "ids array required"})
+			return
+		}
+		log.Printf("[DOCS] BULK DELETE  ids=%v", req.IDs)
+		n, err := docRepo.DeleteBulk(r.Context(), req.IDs)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		log.Printf("[DOCS] BULK DELETE  done  deleted=%d", n)
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+	}
+}
+
+// truncate shortens s to max runes for log previews.
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	runes = []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
+}
+
 // -----------------------------------------
 // MAIN
 // -----------------------------------------
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+
+	log.Printf("══════════════════════════════════════════")
+	log.Printf("[BOOT] RAG API server starting...")
+
 	// -----------------------------------------
 	// LOAD ENV
 	// -----------------------------------------
 
-	// Try loading .env from current dir, then two levels up (project root).
-	// This allows running from both the project root and cmd/api/ directly.
 	for _, p := range []string{".env", "../../.env"} {
 		if err := godotenv.Load(p); err == nil {
+			log.Printf("[BOOT] ENV  loaded from %q", p)
 			break
 		}
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is not set")
+		log.Fatal("[BOOT] ENV  DATABASE_URL is not set")
 	}
+
+	llmModel := os.Getenv("LLM_MODEL")
+	if llmModel == "" {
+		llmModel = "deepseek-r1:latest"
+	}
+	log.Printf("[BOOT] CONFIG  LLM_MODEL=%s  (set LLM_MODEL env to override)", llmModel)
 
 	// -----------------------------------------
 	// DATABASE
 	// -----------------------------------------
 
+	log.Printf("[BOOT] DB  connecting to postgres...")
 	ctx := context.Background()
 	db, err := database.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("[BOOT] DB  connection failed: %v", err)
 	}
 	defer db.Close()
+	log.Printf("[BOOT] DB  connected OK")
 
 	// -----------------------------------------
 	// REPOSITORIES + CLIENTS
@@ -385,6 +528,9 @@ func main() {
 	embClient := embedding.NewClient()
 	llmClient := llm.NewClient()
 
+	log.Printf("[BOOT] CLIENTS  embedding_model=%s  llm_model=%s",
+		embClient.Model, llmClient.Model)
+
 	// -----------------------------------------
 	// ROUTES
 	// -----------------------------------------
@@ -392,8 +538,12 @@ func main() {
 	http.HandleFunc("/query", handleQuery(chunkRepo, embClient, llmClient))
 	http.HandleFunc("/upload", handleUpload(docRepo, chunkRepo, embClient))
 	http.HandleFunc("/documents", handleDocuments(docRepo))
-	http.HandleFunc("/documents/", handleDocuments(docRepo)) // catches /documents/{id}
+	http.HandleFunc("/documents/", handleDocuments(docRepo))
+	http.HandleFunc("/documents/bulk", handleBulkDelete(docRepo))
 
-	log.Println("API server running on :8080")
+	log.Printf("[BOOT] ROUTES  /query  /upload  /documents  /documents/{id}  /documents/bulk")
+	log.Printf("[BOOT] READY   listening on :8080")
+	log.Printf("══════════════════════════════════════════")
+
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
