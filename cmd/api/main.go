@@ -30,6 +30,7 @@ import (
 
 type queryRequest struct {
 	Question string `json:"question"`
+	Model    string `json:"model,omitempty"`
 }
 
 type queryResponse struct {
@@ -238,6 +239,11 @@ func handleQuery(
 		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.Question) == "" {
 			writeJSON(w, http.StatusBadRequest, queryResponse{Error: "invalid request: question is required"})
 			return
+		}
+
+		// Allow per-request model override from the UI
+		if req.Model != "" {
+			llmClient.Model = req.Model
 		}
 
 		stage(start, "[QUERY] QUESTION  %q", req.Question)

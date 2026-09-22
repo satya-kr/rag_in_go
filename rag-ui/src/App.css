@@ -222,6 +222,35 @@
   margin-left: auto;
 }
 
+.model-select {
+  margin-left: auto;
+  padding: 0.25rem 0.55rem;
+  background: rgba(0, 8, 20, 0.8);
+  color: var(--cyan);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.model-select:hover:not(:disabled),
+.model-select:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan-glow);
+}
+
+.model-select:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.model-select option,
+.model-select optgroup {
+  background: #050d1a;
+  color: var(--text);
+}
+
 .status-dot {
   width: 6px;
   height: 6px;

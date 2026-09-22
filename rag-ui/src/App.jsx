@@ -6,6 +6,21 @@ const API = "http://localhost:8080";
 // Supported upload types — checked case-insensitively.
 const SUPPORTED_EXTS = new Set(["txt", "pdf", "md", "rst"]);
 
+const MODEL_OPTIONS = [
+  { group: "Ollama (local)", models: [
+    { value: "deepseek-r1:latest",  label: "DeepSeek R1" },
+    { value: "llama3.2:latest",     label: "Llama 3.2" },
+    { value: "mistral:latest",      label: "Mistral" },
+    { value: "gemma3:latest",       label: "Gemma 3" },
+  ]},
+  { group: "OpenAI", models: [
+    { value: "gpt-4o",       label: "GPT-4o" },
+    { value: "gpt-4o-mini",  label: "GPT-4o Mini" },
+    { value: "gpt-4-turbo",  label: "GPT-4 Turbo" },
+    { value: "gpt-3.5-turbo",label: "GPT-3.5 Turbo" },
+  ]},
+];
+
 // ─── tiny helpers ────────────────────────────────────────────────────────────
 
 function fileExt(name) {
@@ -364,6 +379,7 @@ function ChatPanel() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [model, setModel] = useState("deepseek-r1:latest");
   const bottomRef = useRef(null);
 
   // Auto-scroll to latest message
@@ -384,7 +400,7 @@ function ChatPanel() {
       const res = await fetch(`${API}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: q, model }),
       });
       const data = await res.json();
       setMessages((prev) => [
@@ -413,6 +429,21 @@ function ChatPanel() {
     <section className="panel chat-panel">
       <div className="chat-header">
         <span className="chat-title">Neural Query Interface</span>
+        <select
+          className="model-select"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          disabled={loading}
+          aria-label="Select model"
+        >
+          {MODEL_OPTIONS.map((g) => (
+            <optgroup key={g.group} label={g.group}>
+              {g.models.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
         <span className="chat-status">
           <span className="status-dot" />
           ONLINE
